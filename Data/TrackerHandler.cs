@@ -19,15 +19,11 @@ namespace MopsBot.Data
         public abstract Task UpdateDBAsync(BaseTracker tracker);
         public abstract Task RemoveFromDBAsync(BaseTracker tracker);
         public abstract Task<bool> TryRemoveTrackerAsync(string name, ulong channelID);
-        public abstract Task<bool> TrySetNotificationAsync(string name, ulong channelID, string notificationMessage);
         public abstract Task AddTrackerAsync(string name, ulong channelID, string notification = "");
         public abstract Task<Embed> GetEmbed();
         public abstract HashSet<Tracker.BaseTracker> GetTrackerSet();
         public abstract Dictionary<string, Tracker.BaseTracker> GetTrackers();
         public abstract IEnumerable<BaseTracker> GetTrackers(ulong channelID);
-        public abstract IEnumerable<BaseTracker> GetGuildTrackers(ulong guildId);
-        public abstract IEnumerable<Embed> GetTrackersEmbed(ulong channelID, bool searchServer = false, string name = null);
-        public abstract BaseTracker GetTracker(ulong channelID, string name);
         public abstract Type GetTrackerType();
         public abstract void PostInitialisation();
     }
@@ -301,85 +297,14 @@ namespace MopsBot.Data
             return embed.Build();
         }
 
-        public override async Task<bool> TrySetNotificationAsync(string name, ulong channelID, string notificationMessage)
-        {
-            var tracker = GetTracker(channelID, name);
-
-            if (tracker != null)
-            {
-                tracker.ChannelConfig[channelID]["Notification"] = notificationMessage;
-                await UpdateDBAsync(tracker);
-                return true;
-            }
-
-            return false;
-        }
-
         public override IEnumerable<BaseTracker> GetTrackers(ulong channelID)
         {
             return trackers.Select(x => x.Value).Where(x => x.ChannelConfig.ContainsKey(channelID));
         }
 
-        public override IEnumerable<BaseTracker> GetGuildTrackers(ulong guildId)
-        {
-            try
-            {
-                var channels = Program.Client.GetGuild(guildId).TextChannels;
-                var allTrackers = trackers.Select(x => x.Value).ToList();
-                var guildTrackers = allTrackers.Where(x => x.ChannelConfig.Keys.Any(y => channels.Select(z => z.Id).Contains(y))).ToList();
-                return guildTrackers;
-            }
-            catch
-            {
-                return new List<BaseTracker>();
-            }
-        }
-
-        public async Task<bool> TryModifyTrackerAsync(string name, ulong channelId, Action<T> modifier)
-        {
-            var tracker = GetTracker(channelId, name) as T;
-            if (tracker != null)
-            {
-                modifier(tracker);
-                await UpdateDBAsync(tracker);
-                return true;
-            }
-            else
-                return false;
-        }
-
-        public override IEnumerable<Embed> GetTrackersEmbed(ulong channelID, bool searchServer = false, string name = null)
-        {
-            var guild = (Program.Client.GetChannel(channelID) as SocketGuildChannel).Guild;
-
-            var foundTrackers = (searchServer ? GetGuildTrackers(guild.Id) : trackers.Where(x => x.Value.ChannelConfig.ContainsKey(channelID)).Select(x => x.Value));
-            if (name != null) foundTrackers = foundTrackers.Where(x => x.Name.Equals(name));
-
-            var trackerStrings = foundTrackers.Select(x => x.TrackerUrl() != null ? $"[``{x.Name}``]({x.TrackerUrl()}) [{string.Join(" ", x.ChannelConfig.Keys.Where(y => guild.GetTextChannel(y) != null).Select(y => (Program.Client.GetChannel(y) as SocketTextChannel).Mention))}]\n"
-                                                                                  : $"``{x.Name}`` [{string.Join(" ", x.ChannelConfig.Keys.Where(y => guild.GetTextChannel(y) != null).Select(y => (Program.Client.GetChannel(y) as SocketTextChannel).Mention))}]\n");
-            var embeds = new List<EmbedBuilder>() { new EmbedBuilder().WithTitle(typeof(T).Name).WithCurrentTimestamp().WithColor(Discord.Color.Blue) };
-
-            foreach (var tracker in trackerStrings)
-            {
-                if ((embeds.Last().Description?.Length ?? 0) + tracker.Length > 2048)
-                {
-                    embeds.Add(new EmbedBuilder());
-                    embeds.Last().WithTitle(typeof(T).Name).WithCurrentTimestamp().WithColor(Discord.Color.Blue);
-                }
-                embeds.Last().Description += tracker;
-            }
-
-            return embeds.Select(x => x.Build());
-        }
-
         public override Dictionary<string, BaseTracker> GetTrackers()
         {
             return trackers.Select(x => new KeyValuePair<string, BaseTracker>(x.Key, (BaseTracker)x.Value)).ToDictionary(x => x.Key, x => x.Value);
-        }
-
-        public override BaseTracker GetTracker(ulong channelID, string name)
-        {
-            return trackers.FirstOrDefault(x => x.Key.Equals(name) && x.Value.ChannelConfig.ContainsKey(channelID)).Value;
         }
 
         public override HashSet<BaseTracker> GetTrackerSet()
@@ -399,42 +324,13 @@ namespace MopsBot.Data
         /// <returns>A Task that can be awaited</returns>
         private async Task OnMinorEvent(ulong channelID, Tracker.BaseTracker sender, string notification)
         {
-            if (!Program.GetShardFor(channelID)?.ConnectionState.Equals(Discord.ConnectionState.Connected) ?? true)
-                return;
-            try
-            {
-                if (!notification.Equals(""))
-                    await ((Discord.WebSocket.SocketTextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync(notification);
+            var message = new EventMessage(){
+                ChannelId = channelID,
+                Sender = sender.Name,
+                Notification = notification
+            };
 
-                if((DateTime.Now - sender.LastActivity).TotalSeconds > 10){
-                    sender.LastActivity = DateTime.Now;
-                    await sender.UpdateTracker();
-                }
-            }
-            catch(Exception e)
-            {
-                await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"A {typeof(T).Name} for {sender.Name} got an error:", e));
-                if (Program.Client.GetChannel(channelID) == null || (await ((IGuildChannel)Program.Client.GetChannel(channelID)).Guild.GetCurrentUserAsync()) == null)
-                {
-                    await TryRemoveTrackerAsync(sender.Name, channelID);
-                    await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"Removed Tracker: {sender.Name} Channel {channelID} is missing"));
-                }
-                else
-                {
-                    var permission = (await ((IGuildChannel)Program.Client.GetChannel(channelID)).Guild.GetCurrentUserAsync()).GetPermissions(((IGuildChannel)Program.Client.GetChannel(channelID)));
-                    if (!permission.SendMessages)
-                    {
-                        await TryRemoveTrackerAsync(sender.Name, channelID);
-                        var perms = string.Join(", ", permission.ToList().Select(x => x.ToString() + ": " + permission.Has(x)));
-                        await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"Removed a {typeof(T).Name} for {sender.Name} from Channel {channelID} due to missing Permissions:\n{perms}", e));
-                        if (permission.SendMessages)
-                        {
-                            await ((ITextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync($"Removed tracker for `{sender.Name}` due to missing Permissions");
-                        }
-                    }
-                }
-
-            }
+            await StaticBase.BotCommunication.SendMessage(JsonConvert.SerializeObject(message));
         }
 
         /// <summary>
@@ -444,71 +340,20 @@ namespace MopsBot.Data
         /// <returns>A Task that can be awaited</returns>
         private async Task OnMajorEvent(ulong channelID, Embed embed, Tracker.BaseTracker sender, string notification)
         {
-            if (!Program.GetShardFor(channelID)?.ConnectionState.Equals(Discord.ConnectionState.Connected) ?? true)
-                return;
-            try
-            {
-                if (sender is BaseUpdatingTracker)
-                {
-                    BaseUpdatingTracker tracker = sender as BaseUpdatingTracker;
-                    if (tracker.ToUpdate.ContainsKey(channelID))
-                    {
-                        var message = ((IUserMessage)((ITextChannel)Program.Client.GetChannel(channelID)).GetMessageAsync(tracker.ToUpdate[channelID]).Result);
-                        if (message != null)
-                            await message.ModifyAsync(x =>
-                            {
-                                x.Content = notification;
-                                x.Embed = embed;
-                            });
-                        else
-                        {
-                            var newMessage = await ((Discord.WebSocket.SocketTextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync(notification, embed: embed);
-                            tracker.ToUpdate[channelID] = newMessage.Id;
-                            await tracker.setReaction((IUserMessage)message);
-                            await UpdateDBAsync(tracker);
-                        }
-                    }
-                    else
-                    {
-                        var message = await ((Discord.WebSocket.SocketTextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync(notification, embed: embed);
-                        tracker.ToUpdate.Add(channelID, message.Id);
-                        await tracker.setReaction((IUserMessage)message);
-                        await UpdateDBAsync(tracker);
-                    }
-                }
-                else
-                    await ((Discord.WebSocket.SocketTextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync(notification, embed: embed);
-                
-                if((DateTime.Now - sender.LastActivity).TotalSeconds > 10){
-                    sender.LastActivity = DateTime.Now;
-                    await sender.UpdateTracker();
-                }
-            }
-            catch(Exception e)
-            {
-                await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"A {typeof(T).Name} for {sender.Name} got an error:", e));
-                //Check if channel still exists, or existing only in cache
-                if (Program.Client.GetChannel(channelID) == null || (await ((IGuildChannel)Program.Client.GetChannel(channelID)).Guild.GetCurrentUserAsync()) == null)
-                {
-                    //await TryRemoveTrackerAsync(sender.Name, channelID);
-                    await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"Removed {typeof(T).Name}: {sender.Name} Channel {channelID} is missing"));
-                }
-                //Check if permissions were modified, to an extend of making the tracker unusable
-                else
-                {
-                    var permission = (await ((IGuildChannel)Program.Client.GetChannel(channelID)).Guild.GetCurrentUserAsync()).GetPermissions(((IGuildChannel)Program.Client.GetChannel(channelID)));
-                    if (!permission.SendMessages || (sender is Tracker.BaseUpdatingTracker && (!permission.ManageMessages || !permission.ReadMessageHistory)))
-                    {
-                        await TryRemoveTrackerAsync(sender.Name, channelID);
-                        var perms = string.Join(", ", permission.ToList().Select(x => x.ToString() + ": " + permission.Has(x)));
-                        await Program.MopsLog(new LogMessage(LogSeverity.Warning, "", $"Removed a {typeof(T).Name} for {sender.Name} from Channel {channelID} due to missing Permissions:\n{perms}", e));
-                        if (permission.SendMessages)
-                        {
-                            await ((ITextChannel)Program.Client.GetChannel(channelID)).SendMessageAsync($"Removed tracker for `{sender.Name}` due to missing Permissions");
-                        }
-                    }
-                }
-            }
+            var message = new EventMessage(){
+                ChannelId = channelID,
+                Embed = embed,
+                Sender = sender.Name,
+                Notification = notification
+            };
+
+            await StaticBase.BotCommunication.SendMessage(JsonConvert.SerializeObject(message));
         }
+    }
+
+    public struct EventMessage{
+        public ulong ChannelId;
+        public Embed Embed;
+        public string Sender, Notification;
     }
 }

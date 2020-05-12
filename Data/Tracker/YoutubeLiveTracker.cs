@@ -213,8 +213,8 @@ namespace MopsBot.Data.Tracker
                     //SetTimer(900000);
                     if(ChannelConfig.Any(x => (bool)x.Value[SENDGRAPH])){
                         var png = ViewerGraph.DrawPlot(false, $"{Name}-{DateTime.UtcNow.ToString("MM-dd-yy_hh-mm")}", true);
-                        foreach (ulong channel in ChannelConfig.Keys.Where(x => (bool)ChannelConfig[x][SENDGRAPH]).ToList())
-                            await (Program.Client.GetChannel(channel) as SocketTextChannel).SendFileAsync(png, "Graph for personal use:");
+                        foreach (ulong channel in ChannelConfig.Keys.Where(x => (bool)ChannelConfig[x][SENDGRAPH]).ToList());
+                            //await (Program.Client.GetChannel(channel) as SocketTextChannel).SendFileAsync(png, "Graph for personal use:");
                         File.Delete(png);
                     }
 

@@ -27,39 +27,19 @@ namespace MopsBot
             Task.Run(() => BuildWebHost(args).Run());
             new Program().Start().GetAwaiter().GetResult();
         }
-        public static DiscordShardedClient Client;
+
         public static Dictionary<string, string> Config;
-        public static CommandHandler Handler { get; private set; }
-        public static ReactionHandler ReactionHandler { get; private set; }
-        private static ServiceProvider provider;
-        private static List<ReliabilityService> failsafe = new List<ReliabilityService>();
 
         private async Task Start()
         {
-            Client = new DiscordShardedClient(new DiscordSocketConfig()
-            {
-                LogLevel = LogSeverity.Info,
-                //TotalShards = 2,
-                LargeThreshold = 50,
-                MessageCacheSize = 0,
-                AlwaysDownloadUsers = false,
-            });
 
             using (StreamReader sr = new StreamReader(new FileStream("mopsdata//Config.json", FileMode.Open)))
                 Config = JsonConvert.DeserializeObject<Dictionary<string, string>>(sr.ReadToEnd());
 
-            await Client.LoginAsync(TokenType.Bot, Config["Discord"]);
-            await Client.StartAsync();
-
-            Client.Log += ClientLog;
-            Client.ShardReady += onShardReady;
+            StaticBase.UpdateStatusAsync();
+            StaticBase.initTracking();
 
             await Task.Delay(-1);
-        }
-
-        public static async Task ClientLog(LogMessage msg)
-        {
-            await MopsLog(msg, "", msg.Source, -1);
         }
 
         public static async Task MopsLog(LogMessage msg, [CallerMemberName] string callerName = "", [CallerFilePath] string callerPath = "", [CallerLineNumber] int callerLine = 0)
@@ -71,58 +51,6 @@ namespace MopsBot
             }
 
             Console.WriteLine(message);
-        }
-
-        private static int shardsReady = 0;
-        private DateTime LastGC = default(DateTime);
-        private async Task onShardReady(DiscordSocketClient client)
-        {
-            shardsReady++;
-            await MopsLog(new LogMessage(LogSeverity.Verbose, "", $"Shard {shardsReady} is ready."));
-
-            if((DateTime.UtcNow - LastGC).TotalMinutes > 1 && (((System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1024) / 1024) > 2000
-                || shardsReady == Client.Shards.Count)){
-                LastGC = DateTime.UtcNow;
-                await MopsLog(new LogMessage(LogSeverity.Verbose, "", $"Shard {shardsReady} caused GC."));
-                System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-                System.GC.Collect();
-            }
-
-            if (shardsReady == 1)
-            {
-                Task.Run(() =>
-                {
-                    var map = new ServiceCollection().AddSingleton(Client)
-                                                     .AddSingleton(new InteractiveService(Client));
-
-                    foreach(var shard in Client.Shards){
-                        failsafe.Add(new ReliabilityService(shard, ClientLog));
-                    }
-
-                    provider = map.BuildServiceProvider();
-
-                    ReactionHandler = new ReactionHandler();
-                    ReactionHandler.Install(provider);
-                    Handler = new CommandHandler();
-                    Handler.Install(provider).Wait();
-                });
-            }
-
-            if (shardsReady == Client.Shards.Count)
-            {
-                Task.Run(() =>
-                {
-                    StaticBase.UpdateStatusAsync();
-                    StaticBase.initTracking();
-                });
-            }
-        }
-
-        public static DiscordSocketClient GetShardFor(ulong channelId)
-        {
-            if(Client.GetChannel(channelId) != null)
-                return Client.GetShardFor((Client.GetChannel(channelId) as SocketGuildChannel).Guild);
-            return null;
         }
 
         public static IWebHost BuildWebHost(string[] args) =>

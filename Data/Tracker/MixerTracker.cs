@@ -154,10 +154,7 @@ namespace MopsBot.Data.Tracker
 
                             ViewerGraph?.Dispose();
                             ViewerGraph = null;
-
-                            foreach (var channelMessage in ToUpdate)
-                                await Program.ReactionHandler.ClearHandler((IUserMessage)await ((ITextChannel)Program.Client.GetChannel(channelMessage.Key)).GetMessageAsync(channelMessage.Value));
-
+                            
                             ToUpdate = new Dictionary<ulong, ulong>();
                             GameChanges = new List<Tuple<string, DateTime>>();
 

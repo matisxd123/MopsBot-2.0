@@ -157,16 +157,13 @@ namespace MopsBot.Data.Tracker
                             IsOnline = false;
 
                             var pdf = ViewerGraph.DrawPlot(true, $"{Name}-{DateTime.UtcNow.ToString("MM-dd-yy_hh-mm")}");
-                            foreach (ulong channel in ChannelConfig.Keys.Where(x => (bool)ChannelConfig[x][SENDPDF]).ToList())
-                                await (Program.Client.GetChannel(channel) as SocketTextChannel).SendFileAsync(pdf, "Graph PDF for personal use:");
+                            foreach (ulong channel in ChannelConfig.Keys.Where(x => (bool)ChannelConfig[x][SENDPDF]).ToList());
+                                //await (Program.Client.GetChannel(channel) as SocketTextChannel).SendFileAsync(pdf, "Graph PDF for personal use:");
                             File.Delete(pdf);
 
                             ViewerGraph?.Dispose();
                             ViewerGraph = null;
                             VodUrl = null;
-
-                            foreach (var channelMessage in ToUpdate)
-                                await Program.ReactionHandler.ClearHandler((IUserMessage)await ((ITextChannel)Program.Client.GetChannel(channelMessage.Key)).GetMessageAsync(channelMessage.Value));
 
                             ToUpdate = new Dictionary<ulong, ulong>();
                             GameChanges = new List<Tuple<string, DateTime>>();
